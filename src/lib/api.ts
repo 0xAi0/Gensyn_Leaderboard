@@ -1,9 +1,9 @@
-import type { PeerData } from '@/types';
+import type { ApiPeerData } from '@/types';
 
 // The API base URL now points to our internal Next.js route handler
 const API_BASE_URL = '/api/gensyn/peer?name='; // Relative path
 
-export async function fetchPeerData(name: string): Promise<PeerData> {
+export async function fetchPeerData(name: string): Promise<ApiPeerData> {
   // The request now goes to our Next.js backend
   const response = await fetch(`${API_BASE_URL}${encodeURIComponent(name)}`);
   
@@ -31,5 +31,12 @@ export async function fetchPeerData(name: string): Promise<PeerData> {
   if (!data.peerId || typeof data.peerName === 'undefined' || typeof data.reward === 'undefined' || typeof data.score === 'undefined' || typeof data.online === 'undefined') { 
     throw new Error(`Incomplete or malformed data received for peer "${name}" from our API proxy.`);
   }
-  return data as PeerData;
+  // Explicitly cast to ApiPeerData, which doesn't include gpu or queryName
+  return {
+    peerId: data.peerId,
+    peerName: data.peerName,
+    reward: data.reward,
+    score: data.score,
+    online: data.online,
+  } as ApiPeerData;
 }

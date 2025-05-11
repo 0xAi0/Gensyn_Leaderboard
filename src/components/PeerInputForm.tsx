@@ -1,7 +1,6 @@
 "use client";
 
 import type * as React from 'react';
-// import { useState } from 'react'; // No longer needed with RHF managing state
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import * as z from 'zod';
@@ -9,33 +8,31 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from '@/components/ui/form';
 import { Loader2 } from 'lucide-react';
-// import { useToast } from "@/hooks/use-toast"; // Toast handled by parent
-
 
 const formSchema = z.object({
   peerName: z.string().min(1, 'Peer identifier cannot be empty.'),
+  gpu: z.string().optional(), // GPU field is optional
 });
 
 interface PeerInputFormProps {
-  onAddPeer: (name: string) => Promise<void>;
+  onAddPeer: (name: string, gpu?: string) => Promise<void>;
   isAdding: boolean;
 }
 
 export function PeerInputForm({ onAddPeer, isAdding }: PeerInputFormProps) {
-  // const { toast } = useToast(); // Toast handled by parent
   const form = useForm<z.infer<typeof formSchema>>({
     resolver: zodResolver(formSchema),
     defaultValues: {
       peerName: '',
+      gpu: '',
     },
   });
 
   async function onSubmit(values: z.infer<typeof formSchema>) {
     try {
-      await onAddPeer(values.peerName);
+      await onAddPeer(values.peerName, values.gpu);
       form.reset();
     } catch (error) {
-      // Error is handled by the parent component's onAddPeer which should show a toast
       console.error("Error in PeerInputForm onSubmit:", error);
     }
   }
@@ -51,6 +48,19 @@ export function PeerInputForm({ onAddPeer, isAdding }: PeerInputFormProps) {
               <FormLabel>Peer Identifier</FormLabel>
               <FormControl>
                 <Input placeholder="Enter peer identifier (e.g., wdkfd)" {...field} />
+              </FormControl>
+              <FormMessage />
+            </FormItem>
+          )}
+        />
+        <FormField
+          control={form.control}
+          name="gpu"
+          render={({ field }) => (
+            <FormItem>
+              <FormLabel>GPU (Optional)</FormLabel>
+              <FormControl>
+                <Input placeholder="e.g., RTX 4090, A100" {...field} />
               </FormControl>
               <FormMessage />
             </FormItem>

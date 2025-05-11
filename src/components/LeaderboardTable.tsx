@@ -10,7 +10,7 @@ import {
   TableRow,
 } from '@/components/ui/table';
 import { Button } from '@/components/ui/button';
-import { ArrowUpDown, ArrowUp, ArrowDown, RefreshCw, Users } from 'lucide-react';
+import { ArrowUpDown, ArrowUp, ArrowDown, RefreshCw, Users, HardDrive } from 'lucide-react'; // Added HardDrive for GPU
 import type { PeerData, SortableKey } from '@/types';
 
 interface LeaderboardTableProps {
@@ -47,7 +47,12 @@ export function LeaderboardTable({ peers, sortConfig, onSort, onRefreshPeer, isR
       <Table>
         <TableHeader>
           <TableRow>
-            <TableHead className="w-[200px] text-card-foreground">Peer Name</TableHead>
+            <TableHead className="w-[180px] text-card-foreground">Peer Name</TableHead>
+            <TableHead className="w-[150px] text-card-foreground">
+              <div className="flex items-center">
+                <HardDrive className="mr-2 h-4 w-4 text-muted-foreground" /> GPU
+              </div>
+            </TableHead>
             <TableHead
               className="cursor-pointer hover:bg-accent/50 transition-colors text-card-foreground"
               onClick={() => onSort('score')}
@@ -74,6 +79,7 @@ export function LeaderboardTable({ peers, sortConfig, onSort, onRefreshPeer, isR
           {peers.map((peer) => (
             <TableRow key={peer.peerId}>
               <TableCell className="font-medium text-card-foreground">{peer.peerName}</TableCell>
+              <TableCell className="text-card-foreground text-sm">{peer.gpu || '-'}</TableCell>
               <TableCell className="text-card-foreground">{peer.score.toLocaleString()}</TableCell>
               <TableCell className="text-card-foreground">{peer.reward.toLocaleString()}</TableCell>
               <TableCell>
