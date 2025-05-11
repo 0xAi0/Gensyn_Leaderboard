@@ -1,3 +1,4 @@
+
 "use client";
 
 import type * as React from 'react';
@@ -5,14 +6,14 @@ import { useState, useEffect, useMemo, useCallback } from 'react';
 import { PeerInputForm } from '@/components/PeerInputForm';
 import { LeaderboardTable } from '@/components/LeaderboardTable';
 import { Button } from '@/components/ui/button';
-import { fetchPeerData } from '@/lib/api';
-import type { PeerData, SortableKey, ApiPeerData } from '@/types';
+import type { PeerData, SortableKey } from '@/types';
 import { useToast } from "@/hooks/use-toast";
 import { Loader2, RefreshCw } from 'lucide-react';
-
-const LOCAL_STORAGE_KEY = 'gensynLeaderboardPeers';
-const LOCAL_STORAGE_REFRESH_TIMESTAMPS_KEY = 'gensynLeaderboardPeerRefreshTimestamps';
-const LOCAL_STORAGE_GPU_KEY = 'gensynLeaderboardPeerGPUs';
+import { 
+  addOrUpdatePeerInFirestore, 
+  getAllPeersFromFirestore, 
+  refreshPeerDataInFirestore 
+} from '@/lib/firebase';
 
 const isAdmin = false; 
 const REFRESH_COOLDOWN_HOURS = 6;
@@ -20,103 +21,72 @@ const REFRESH_COOLDOWN_MS = REFRESH_COOLDOWN_HOURS * 60 * 60 * 1000;
 
 export default function Home() {
   const [peers, setPeers] = useState<PeerData[]>([]);
-  const [queryNames, setQueryNames] = useState<string[]>([]);
-  const [gpus, setGpus] = useState<Record<string, string>>({});
   const [isLoading, setIsLoading] = useState(true);
   const [isAddingPeer, setIsAddingPeer] = useState(false);
-  const [isRefreshingAll, setIsRefreshingAll] = useState(false);
-  const [refreshingPeerName, setRefreshingPeerName] = useState<string | null>(null);
-  const [lastRefreshTimestamps, setLastRefreshTimestamps] = useState<Record<string, number>>({});
+  const [isRefreshingAll, setIsRefreshingAll] = useState(false); // Kept for potential admin use
+  const [refreshingPeerId, setRefreshingPeerId] = useState<string | null>(null);
 
   const [sortConfig, setSortConfig] = useState<{ key: SortableKey | null; direction: 'ascending' | 'descending' } | null>(null);
   const { toast } = useToast();
 
-  const updatePeerInList = useCallback((apiPeerData: ApiPeerData, queryNameUsed: string) => {
+  const updatePeersState = useCallback((updatedOrNewPeer: PeerData) => {
     setPeers(prevPeers => {
-      const existingPeerIndex = prevPeers.findIndex(p => p.peerId === apiPeerData.peerId);
-      const peerGpu = gpus[queryNameUsed] || undefined;
-      const fullPeerData: PeerData = { ...apiPeerData, queryName: queryNameUsed, gpu: peerGpu };
-      
-      let updatedPeers;
+      const existingPeerIndex = prevPeers.findIndex(p => p.id === updatedOrNewPeer.id);
       if (existingPeerIndex > -1) {
-        updatedPeers = [...prevPeers];
-        // Preserve existing GPU if not found in current gpus state (e.g. if gpus state not yet updated)
-        // but prioritize current gpus state if available.
-        const existingGpu = updatedPeers[existingPeerIndex].gpu;
-        updatedPeers[existingPeerIndex] = { ...fullPeerData, gpu: peerGpu || existingGpu };
-      } else {
-        updatedPeers = [...prevPeers, fullPeerData];
+        const newPeers = [...prevPeers];
+        newPeers[existingPeerIndex] = updatedOrNewPeer;
+        return newPeers;
       }
-      return updatedPeers;
+      return [...prevPeers, updatedOrNewPeer];
     });
-  }, [gpus]);
-  
-  const handleFetchPeer = useCallback(async (name: string, isBulkOperation: boolean = false): Promise<ApiPeerData | null> => {
-    try {
-      const data = await fetchPeerData(name);
-      // updatePeerInList is called here, it will use the current `gpus` state.
-      updatePeerInList(data, name); 
-      if(!isBulkOperation) {
+  }, []);
+
+  // Load initial peers from Firestore
+  useEffect(() => {
+    async function loadPeers() {
+      setIsLoading(true);
+      try {
+        const firestorePeers = await getAllPeersFromFirestore();
+        setPeers(firestorePeers);
+      } catch (error: any) {
+        console.error("Error loading peers from Firestore:", error);
         toast({
-          title: "Peer Updated",
-          description: `${data.peerName}'s data has been updated.`,
-        });
-      }
-      return data;
-    } catch (error: any) {
-      console.error(`Error fetching peer ${name}:`, error);
-      if(!isBulkOperation) {
-        toast({
-          title: "Error",
-          description: error.message || `Could not fetch data for ${name}.`,
+          title: "Error Loading Leaderboard",
+          description: error.message || "Could not fetch leaderboard data from the database.",
           variant: "destructive",
         });
+      } finally {
+        setIsLoading(false);
       }
-      return null;
     }
-  }, [toast, updatePeerInList]);
+    loadPeers();
+  }, [toast]);
 
-  const addPeer = async (name: string, gpu?: string) => {
+  const handleAddPeer = async (queryName: string, gpu?: string) => {
     setIsAddingPeer(true);
-    const fetchedApiData = await handleFetchPeer(name); // This calls updatePeerInList
-    setIsAddingPeer(false);
-
-    if (fetchedApiData) {
-      setQueryNames(prevQueryNames => {
-        const newQueryNames = Array.from(new Set([...prevQueryNames, name]));
-        localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(newQueryNames));
-        return newQueryNames;
+    try {
+      const newOrUpdatedPeer = await addOrUpdatePeerInFirestore(queryName, gpu);
+      updatePeersState(newOrUpdatedPeer);
+      toast({
+        title: "Peer Added/Updated",
+        description: `${newOrUpdatedPeer.peerName}'s data has been added/updated on the leaderboard.`,
       });
-
-      if (gpu && gpu.trim() !== "") {
-        const newGpus = { ...gpus, [name]: gpu };
-        setGpus(newGpus);
-        localStorage.setItem(LOCAL_STORAGE_GPU_KEY, JSON.stringify(newGpus));
-        // Manually trigger updatePeerInList again to ensure the specific peer's GPU is immediately reflected
-        // if handleFetchPeer's updatePeerInList ran before gpus state was set by this addPeer call.
-        updatePeerInList(fetchedApiData, name);
-      } else if (gpus[name]) { // If GPU was cleared
-        const newGpus = { ...gpus };
-        delete newGpus[name];
-        setGpus(newGpus);
-        localStorage.setItem(LOCAL_STORAGE_GPU_KEY, JSON.stringify(newGpus));
-        updatePeerInList(fetchedApiData, name); // Re-run to reflect cleared GPU
-      }
-
-
-      const now = Date.now();
-      const newTimestamps = { ...lastRefreshTimestamps, [name]: now };
-      setLastRefreshTimestamps(newTimestamps);
-      localStorage.setItem(LOCAL_STORAGE_REFRESH_TIMESTAMPS_KEY, JSON.stringify(newTimestamps));
+    } catch (error: any) {
+      console.error(`Error adding/updating peer ${queryName}:`, error);
+      toast({
+        title: "Error",
+        description: error.message || `Could not add or update ${queryName}.`,
+        variant: "destructive",
+      });
+    } finally {
+      setIsAddingPeer(false);
     }
   };
 
-  const refreshSinglePeer = async (queryName: string) => {
+  const handleRefreshSinglePeer = async (peerToRefresh: PeerData) => {
     const now = Date.now();
-    const lastRefreshed = lastRefreshTimestamps[queryName];
-
-    if (lastRefreshed && (now - lastRefreshed < REFRESH_COOLDOWN_MS)) {
-      const timeLeftMs = REFRESH_COOLDOWN_MS - (now - lastRefreshed);
+    if (peerToRefresh.lastRefreshed && (now - peerToRefresh.lastRefreshed < REFRESH_COOLDOWN_MS)) {
+      const timeLeftMs = REFRESH_COOLDOWN_MS - (now - peerToRefresh.lastRefreshed);
       const hoursLeft = Math.floor(timeLeftMs / (60 * 60 * 1000));
       const minutesLeft = Math.ceil((timeLeftMs % (60 * 60 * 1000)) / (60 * 1000));
       
@@ -127,166 +97,78 @@ export default function Home() {
 
       toast({
         title: "Refresh Cooldown",
-        description: `Peer ${queryName} was refreshed recently. Please try again in approx. ${timeRemainingStr.trim()}.`,
+        description: `Peer ${peerToRefresh.peerName} was refreshed recently. Please try again in approx. ${timeRemainingStr.trim()}.`,
       });
       return;
     }
 
-    setRefreshingPeerName(queryName);
-    const fetchedApiData = await handleFetchPeer(queryName); // Calls updatePeerInList
-    if (fetchedApiData) { 
-      const newTimestamps = { ...lastRefreshTimestamps, [queryName]: Date.now() };
-      setLastRefreshTimestamps(newTimestamps);
-      localStorage.setItem(LOCAL_STORAGE_REFRESH_TIMESTAMPS_KEY, JSON.stringify(newTimestamps));
+    setRefreshingPeerId(peerToRefresh.id);
+    try {
+      const refreshedPeer = await refreshPeerDataInFirestore(peerToRefresh.id);
+      updatePeersState(refreshedPeer);
+      toast({
+        title: "Peer Refreshed",
+        description: `${refreshedPeer.peerName}'s data has been updated.`,
+      });
+    } catch (error: any) {
+      console.error(`Error refreshing peer ${peerToRefresh.peerName}:`, error);
+      toast({
+        title: "Refresh Error",
+        description: error.message || `Could not refresh data for ${peerToRefresh.peerName}.`,
+        variant: "destructive",
+      });
+    } finally {
+      setRefreshingPeerId(null);
     }
-    setRefreshingPeerName(null);
   };
   
-  const refreshMultiplePeers = useCallback(async (namesToRefresh: string[], currentGpus: Record<string,string>, isInitialLoad: boolean = false) => {
-    if (!isInitialLoad) setIsRefreshingAll(true); else setIsLoading(true);
-    
-    const fetchPromises = namesToRefresh.map(name => 
-      fetchPeerData(name)
-        .then(data => ({ status: 'fulfilled' as const, value: data, queryName: name }))
-        .catch(reason => ({ status: 'rejected' as const, reason, queryName: name }))
-    );
-    
-    const results = await Promise.all(fetchPromises);
-
-    let successfulFetches = 0;
-    const newPeersData: PeerData[] = [];
-    const errors: {queryName: string, message: string}[] = [];
-    const updatedTimestampsBatch: Record<string, number> = {};
-
-    results.forEach(result => {
-      if (result.status === 'fulfilled') {
-        const peerGpu = currentGpus[result.queryName] || undefined;
-        newPeersData.push({ ...result.value, queryName: result.queryName, gpu: peerGpu });
-        successfulFetches++;
-        if(isInitialLoad) {
-             updatedTimestampsBatch[result.queryName] = Date.now();
-        }
-      } else {
-        console.error(`Error fetching peer ${result.queryName} during bulk refresh:`, result.reason);
-        errors.push({queryName: result.queryName, message: result.reason?.message || 'Unknown error'});
-      }
-    });
-
-    setPeers(prevPeers => {
-      const peerMap = new Map(prevPeers.map(p => [p.peerId, p]));
-      newPeersData.forEach(newPeer => {
-        const existingPeer = peerMap.get(newPeer.peerId);
-        // Ensure GPU from currentGpus is preferred, but fall back to existing if somehow not in currentGpus
-        // This primarily ensures that newPeersData (which already incorporates currentGpus) is used.
-        const gpuToSet = currentGpus[newPeer.queryName!] !== undefined ? currentGpus[newPeer.queryName!] : existingPeer?.gpu;
-        peerMap.set(newPeer.peerId, {...newPeer, gpu: gpuToSet });
-      });
-      return Array.from(peerMap.values());
-    });
-    
-    if(isInitialLoad && Object.keys(updatedTimestampsBatch).length > 0){
-        setLastRefreshTimestamps(prevTimestamps => {
-            const newCombinedTimestamps = {...prevTimestamps, ...updatedTimestampsBatch};
-            localStorage.setItem(LOCAL_STORAGE_REFRESH_TIMESTAMPS_KEY, JSON.stringify(newCombinedTimestamps));
-            return newCombinedTimestamps;
-        });
-    }
-    
-    if (!isInitialLoad) {
-      toast({
-        title: "Refresh Complete",
-        description: `Successfully updated ${successfulFetches} of ${namesToRefresh.length} peers.`,
-      });
-      errors.forEach(err => {
-        toast({
-            title: `Refresh Error for ${err.queryName}`,
-            description: err.message,
-            variant: "destructive",
-        });
-      });
-      setIsRefreshingAll(false);
-    } else {
-        if (namesToRefresh.length > 0 && successfulFetches === 0 && errors.length > 0) {
-             toast({
-                title: "Initial Load Failed",
-                description: "Could not fetch data for any stored peers. Please check console for details.",
-                variant: "destructive",
-            });
-        }
-      setIsLoading(false);
-    }
-  }, [toast]); 
-
-  useEffect(() => {
-    const storedQueryNamesString = localStorage.getItem(LOCAL_STORAGE_KEY);
-    let initialQueryNames: string[] = [];
-    if (storedQueryNamesString) {
-      try {
-        const parsedNames = JSON.parse(storedQueryNamesString);
-        if (Array.isArray(parsedNames)) initialQueryNames = parsedNames;
-        else localStorage.removeItem(LOCAL_STORAGE_KEY); 
-      } catch (e) {
-        console.error("Failed to parse query names from localStorage:", e);
-        localStorage.removeItem(LOCAL_STORAGE_KEY);
-      }
-    }
-    setQueryNames(initialQueryNames);
-
-    const storedGpusString = localStorage.getItem(LOCAL_STORAGE_GPU_KEY);
-    let initialGpus: Record<string, string> = {};
-    if (storedGpusString) {
-        try {
-            const parsedGpus = JSON.parse(storedGpusString);
-            if (typeof parsedGpus === 'object' && parsedGpus !== null) initialGpus = parsedGpus;
-            else localStorage.removeItem(LOCAL_STORAGE_GPU_KEY);
-        } catch (e) {
-            console.error("Failed to parse GPUs from localStorage:", e);
-            localStorage.removeItem(LOCAL_STORAGE_GPU_KEY);
-        }
-    }
-    setGpus(initialGpus);
-
-    const storedTimestampsString = localStorage.getItem(LOCAL_STORAGE_REFRESH_TIMESTAMPS_KEY);
-    if (storedTimestampsString) {
-        try {
-            const parsedTimestamps = JSON.parse(storedTimestampsString);
-            if (typeof parsedTimestamps === 'object' && parsedTimestamps !== null) setLastRefreshTimestamps(parsedTimestamps);
-            else localStorage.removeItem(LOCAL_STORAGE_REFRESH_TIMESTAMPS_KEY);
-        } catch (e) {
-            console.error("Failed to parse refresh timestamps from localStorage:", e);
-            localStorage.removeItem(LOCAL_STORAGE_REFRESH_TIMESTAMPS_KEY);
-        }
-    }
-
-    if (initialQueryNames.length > 0) {
-        refreshMultiplePeers(initialQueryNames, initialGpus, true);
-    } else {
-        setIsLoading(false);
-    }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []); // refreshMultiplePeers is memoized. Pass initialGpus from this effect.
-
-  const refreshAllPeers = async () => {
-    if (queryNames.length === 0) {
+  // Admin-only functionality - currently hidden as isAdmin is false
+  const handleRefreshAllPeers = async () => {
+    if (!isAdmin) return;
+    if (peers.length === 0) {
       toast({ title: "No Peers", description: "There are no peers to refresh." });
       return;
     }
     setIsRefreshingAll(true);
-    await refreshMultiplePeers(queryNames, gpus, false); 
     
-    const now = Date.now();
-    const newTimestampsForAll = queryNames.reduce((acc, name) => {
-        acc[name] = now;
-        return acc;
-    }, {} as Record<string,number>);
+    const refreshPromises = peers.map(peer => 
+      refreshPeerDataInFirestore(peer.id)
+        .then(refreshedPeer => ({ status: 'fulfilled' as const, value: refreshedPeer }))
+        .catch(reason => ({ status: 'rejected' as const, reason, peerName: peer.peerName}))
+    );
+    
+    const results = await Promise.all(refreshPromises);
+    
+    let successfulRefreshes = 0;
+    const updatedPeersBatch: PeerData[] = [];
 
-    setLastRefreshTimestamps(prevTimestamps => {
-        const combined = {...prevTimestamps, ...newTimestampsForAll};
-        localStorage.setItem(LOCAL_STORAGE_REFRESH_TIMESTAMPS_KEY, JSON.stringify(combined));
-        return combined;
+    results.forEach(result => {
+      if (result.status === 'fulfilled') {
+        updatedPeersBatch.push(result.value);
+        successfulRefreshes++;
+      } else {
+        toast({
+            title: `Refresh Error for ${result.peerName}`,
+            description: result.reason?.message || 'Unknown error',
+            variant: "destructive",
+        });
+      }
+    });
+
+    // Batch update local state for performance if many peers
+    setPeers(currentPeers => {
+      const newPeersMap = new Map(currentPeers.map(p => [p.id, p]));
+      updatedPeersBatch.forEach(p => newPeersMap.set(p.id, p));
+      return Array.from(newPeersMap.values());
+    });
+
+    toast({
+      title: "Refresh All Complete",
+      description: `Successfully updated ${successfulRefreshes} of ${peers.length} peers.`,
     });
     setIsRefreshingAll(false);
   };
+
 
   const sortedPeers = useMemo(() => {
     let sortablePeers = [...peers];
@@ -299,6 +181,9 @@ export default function Home() {
             if (valA < valB) return sortConfig.direction === 'ascending' ? -1 : 1;
             if (valA > valB) return sortConfig.direction === 'ascending' ? 1 : -1;
         }
+        // Secondary sort by peerName if scores/rewards are equal
+        if (a.peerName < b.peerName) return -1;
+        if (a.peerName > b.peerName) return 1;
         return 0;
       });
     }
@@ -310,6 +195,7 @@ export default function Home() {
     if (sortConfig && sortConfig.key === key && sortConfig.direction === 'descending') {
       direction = 'ascending';
     } else if (sortConfig && sortConfig.key === key && sortConfig.direction === 'ascending') {
+      // Default back to descending if already ascending and clicked again
       direction = 'descending';
     }
     setSortConfig({ key, direction });
@@ -324,21 +210,21 @@ export default function Home() {
           </svg>
           <h1 className="text-4xl font-bold text-foreground">Gensyn Leaderboard</h1>
         </div>
-        <p className="text-muted-foreground">Track peer rewards and scores on the Gensyn network.</p>
+        <p className="text-muted-foreground">Track peer rewards and scores on the Gensyn network. Data is stored and shared among users.</p>
       </header>
       
       <main className="flex-grow">
-        <PeerInputForm onAddPeer={addPeer} isAdding={isAddingPeer} />
+        <PeerInputForm onAddPeer={handleAddPeer} isAdding={isAddingPeer} />
 
-        {isAdmin && (
+        {isAdmin && ( // "Refresh All" button is admin-only
           <div className="mb-6 flex justify-end">
             <Button 
-              onClick={refreshAllPeers} 
-              disabled={isRefreshingAll || isLoading || queryNames.length === 0} 
+              onClick={handleRefreshAllPeers} 
+              disabled={isRefreshingAll || isLoading || peers.length === 0} 
               variant="outline"
             >
               {isRefreshingAll ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <RefreshCw className="mr-2 h-4 w-4" />}
-              Refresh All
+              Refresh All (Admin)
             </Button>
           </div>
         )}
@@ -352,15 +238,15 @@ export default function Home() {
             peers={sortedPeers} 
             sortConfig={sortConfig} 
             onSort={requestSort}
-            onRefreshPeer={refreshSinglePeer}
-            isRefreshingPeer={(name) => refreshingPeerName === name}
+            onRefreshPeer={handleRefreshSinglePeer}
+            isRefreshingPeer={(peerId) => refreshingPeerId === peerId}
           />
         )}
       </main>
       
       <footer className="mt-12 pt-8 border-t text-center text-sm text-muted-foreground">
         <p>&copy; {new Date().getFullYear()} Gensyn Leaderboard. All rights reserved.</p>
-         <p className="mt-1">Data fetched from Gensyn Dashboard API.</p>
+         <p className="mt-1">Data fetched from Gensyn Dashboard API and stored collaboratively.</p>
       </footer>
     </div>
   );

@@ -28,10 +28,10 @@ export async function fetchPeerData(name: string): Promise<ApiPeerData> {
   
   // Basic validation of the data structure received from our proxy
   // The proxy should ideally ensure data integrity from the external API
-  if (!data.peerId || typeof data.peerName === 'undefined' || typeof data.reward === 'undefined' || typeof data.score === 'undefined' || typeof data.online === 'undefined') { 
+  if (data.peerId === undefined || typeof data.peerName === 'undefined' || typeof data.reward === 'undefined' || typeof data.score === 'undefined' || typeof data.online === 'undefined') { 
     throw new Error(`Incomplete or malformed data received for peer "${name}" from our API proxy.`);
   }
-  // Explicitly cast to ApiPeerData, which doesn't include gpu or queryName
+  // Explicitly cast to ApiPeerData, which doesn't include gpu or queryName or id or lastRefreshed
   return {
     peerId: data.peerId,
     peerName: data.peerName,

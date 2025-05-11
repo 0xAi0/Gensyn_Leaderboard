@@ -1,3 +1,4 @@
+
 "use client";
 
 import type * as React from 'react';
@@ -10,15 +11,15 @@ import {
   TableRow,
 } from '@/components/ui/table';
 import { Button } from '@/components/ui/button';
-import { ArrowUpDown, ArrowUp, ArrowDown, RefreshCw, Users, HardDrive } from 'lucide-react'; // Added HardDrive for GPU
+import { ArrowUpDown, ArrowUp, ArrowDown, RefreshCw, Users, HardDrive } from 'lucide-react';
 import type { PeerData, SortableKey } from '@/types';
 
 interface LeaderboardTableProps {
   peers: PeerData[];
   sortConfig: { key: SortableKey | null; direction: 'ascending' | 'descending' } | null;
   onSort: (key: SortableKey) => void;
-  onRefreshPeer: (queryName: string) => Promise<void>;
-  isRefreshingPeer: (queryName: string) => boolean;
+  onRefreshPeer: (peer: PeerData) => Promise<void>;
+  isRefreshingPeer: (peerId: string) => boolean;
 }
 
 export function LeaderboardTable({ peers, sortConfig, onSort, onRefreshPeer, isRefreshingPeer }: LeaderboardTableProps) {
@@ -77,7 +78,7 @@ export function LeaderboardTable({ peers, sortConfig, onSort, onRefreshPeer, isR
         </TableHeader>
         <TableBody>
           {peers.map((peer) => (
-            <TableRow key={peer.peerId}>
+            <TableRow key={peer.id}> {/* Use Firestore document ID as key */}
               <TableCell className="font-medium text-card-foreground">{peer.peerName}</TableCell>
               <TableCell className="text-card-foreground text-sm">{peer.gpu || '-'}</TableCell>
               <TableCell className="text-card-foreground">{peer.score.toLocaleString()}</TableCell>
@@ -93,12 +94,12 @@ export function LeaderboardTable({ peers, sortConfig, onSort, onRefreshPeer, isR
                 <Button 
                   variant="ghost" 
                   size="icon" 
-                  onClick={() => onRefreshPeer(peer.queryName || peer.peerName)}
-                  disabled={isRefreshingPeer(peer.queryName || peer.peerName)}
+                  onClick={() => onRefreshPeer(peer)}
+                  disabled={isRefreshingPeer(peer.id)}
                   aria-label={`Refresh ${peer.peerName}`}
                   className="text-card-foreground hover:text-accent-foreground"
                 >
-                  <RefreshCw className={`h-4 w-4 ${isRefreshingPeer(peer.queryName || peer.peerName) ? 'animate-spin' : ''}`} />
+                  <RefreshCw className={`h-4 w-4 ${isRefreshingPeer(peer.id) ? 'animate-spin' : ''}`} />
                 </Button>
               </TableCell>
             </TableRow>
