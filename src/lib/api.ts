@@ -1,37 +1,49 @@
+
 import type { ApiPeerData } from '@/types';
 
-// The API base URL now points to our internal Next.js route handler
-const API_BASE_URL = '/api/gensyn/peer?name='; // Relative path
+const getApiProxyBaseUrl = () => {
+  if (typeof window === 'undefined') {
+    // Running on the server, requires an absolute URL for self-API calls
+    // Use NEXT_PUBLIC_APP_URL if available, otherwise default to localhost:9002 for development
+    const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:9002';
+    return `${appUrl}/api/gensyn/peer`;
+  }
+  // Running in the browser, can use a relative path
+  return '/api/gensyn/peer';
+};
 
 export async function fetchPeerData(name: string): Promise<ApiPeerData> {
-  // The request now goes to our Next.js backend
-  const response = await fetch(`${API_BASE_URL}${encodeURIComponent(name)}`);
+  const apiUrl = getApiProxyBaseUrl();
+  const fullUrl = `${apiUrl}?name=${encodeURIComponent(name)}`;
+  
+  const response = await fetch(fullUrl);
   
   if (!response.ok) {
     let errorMessage = `Failed to fetch data for peer "${name}". Status: ${response.status}`;
     try {
-      // Our proxy should return JSON errors with a 'message' field
       const errorData = await response.json();
       if (errorData && typeof errorData.message === 'string') {
         errorMessage = errorData.message;
-      } else if (response.statusText) { // Fallback if proxy doesn't conform
+      } else if (response.statusText) { 
         errorMessage = `Error: ${response.statusText}`;
       }
     } catch (e) {
-      // Failed to parse JSON error from our proxy, stick with the status code error
-      // This might happen if the proxy itself has an unhandled error and returns non-JSON
+      // Failed to parse JSON error from our proxy
     }
     throw new Error(errorMessage);
   }
   
   const data = await response.json();
   
-  // Basic validation of the data structure received from our proxy
-  // The proxy should ideally ensure data integrity from the external API
-  if (data.peerId === undefined || typeof data.peerName === 'undefined' || typeof data.reward === 'undefined' || typeof data.score === 'undefined' || typeof data.online === 'undefined') { 
+  // Validate the data structure received from our proxy
+  if (typeof data.peerId !== 'string' || 
+      typeof data.peerName !== 'string' || 
+      typeof data.reward !== 'number' || 
+      typeof data.score !== 'number' || 
+      typeof data.online !== 'boolean') { 
     throw new Error(`Incomplete or malformed data received for peer "${name}" from our API proxy.`);
   }
-  // Explicitly cast to ApiPeerData, which doesn't include gpu or queryName or id or lastRefreshed
+
   return {
     peerId: data.peerId,
     peerName: data.peerName,
